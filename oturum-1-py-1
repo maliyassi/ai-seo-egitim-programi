@@ -18,7 +18,7 @@ from urllib.parse import urlparse
 from collections import defaultdict
 
 # ─── Ayarlar ────────────────────────────────────────────
-GEMINI_API_KEY = "AIzaSyDTrSc5nCH8E4h3XDwn3-1zo1ltT0_6hWQ"
+GEMINI_API_KEY = "BURAYA_API_GELECEK"
 GEMINI_MODEL = "gemini-3-flash-preview"
 GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
