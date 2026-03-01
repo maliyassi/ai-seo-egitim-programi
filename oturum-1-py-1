@@ -1,0 +1,396 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+GSC Sayfa Verisi Analizi - Gemini API ile
+==========================================
+Bu script, Google Search Console sayfa verilerini okur,
+5 farklı SEO analiz grubuna ayırır ve Gemini API'ye göndererek
+yapılandırılmış JSON çıktısı alır.
+"""
+
+import time
+import csv
+import json
+import re
+import os
+import requests
+from urllib.parse import urlparse
+from collections import defaultdict
+
+# ─── Ayarlar ────────────────────────────────────────────
+GEMINI_API_KEY = "AIzaSyDTrSc5nCH8E4h3XDwn3-1zo1ltT0_6hWQ"
+GEMINI_MODEL = "gemini-3-flash-preview"
+GEMINI_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
+
+CSV_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Sayfa Sayısı.csv")
+OUTPUT_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gsc_analiz_sonuclari.json")
+
+
+def parse_csv(filepath):
+    """CSV dosyasını okur ve satırları dict listesi olarak döndürür."""
+    rows = []
+    with open(filepath, "r", encoding="utf-8-sig") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                url = row.get("En alakalı sayfalar", "").strip()
+                clicks = int(row.get("Tıklamalar", "0").replace(".", "").replace(",", "").strip())
+                impressions_raw = row.get("Gösterimler", "0").replace(".", "").replace(",", "").strip()
+                impressions = int(impressions_raw)
+
+                ctr_raw = row.get("TO", "0%").replace("%", "").replace(",", ".").strip()
+                ctr = float(ctr_raw)
+
+                pos_raw = row.get("Pozisyon", "0").replace(",", ".").strip()
+                # Pozisyon "08.05" gibi olabilir, float olarak al
+                position = float(pos_raw)
+
+                rows.append({
+                    "url": url,
+                    "clicks": clicks,
+                    "impressions": impressions,
+                    "ctr": ctr,
+                    "position": position
+                })
+            except (ValueError, TypeError) as e:
+                continue
+    return rows
+
+
+def filter_sge_riski(data):
+    """Gösterim > 10.000 VE CTR < %1 olan sayfalar"""
+    return [r for r in data if r["impressions"] > 10000 and r["ctr"] < 1.0]
+
+
+def filter_hizli_kazanc(data):
+    """Pozisyon 4-10 arası VE gösterim > 5.000"""
+    return [r for r in data if 4 <= r["position"] <= 10 and r["impressions"] > 5000]
+
+
+def filter_scale_edilebilir(data):
+    """CTR > %15 VE gösterim < 500"""
+    return [r for r in data if r["ctr"] > 15.0 and r["impressions"] < 500]
+
+
+def filter_ilk_sayfa_siniri(data):
+    """Pozisyon 8-12 arası VE gösterim > 3.000"""
+    return [r for r in data if 8 <= r["position"] <= 12 and r["impressions"] > 3000]
+
+
+def find_duplicate_url_suspects(data):
+    """
+    Benzer URL pattern'ları bulur:
+    - trailing slash farkı (örn: /abc vs /abc/)
+    - aynı slug farklı path
+    """
+    duplicates = []
+    url_map = {}
+
+    for row in data:
+        url = row["url"].rstrip("/")
+        if url in url_map:
+            url_map[url].append(row)
+        else:
+            url_map[url] = [row]
+
+    # Trailing slash farkı olan URL'leri bul
+    seen_pairs = set()
+    for row in data:
+        url = row["url"]
+        normalized = url.rstrip("/")
+
+        # trailing slash varyantını kontrol et
+        if url.endswith("/"):
+            counterpart = url[:-1]
+        else:
+            counterpart = url + "/"
+
+        # Counterpart'ı veri setinde ara
+        for other_row in data:
+            if other_row["url"] == counterpart:
+                pair_key = tuple(sorted([url, counterpart]))
+                if pair_key not in seen_pairs:
+                    seen_pairs.add(pair_key)
+                    duplicates.append({
+                        "url_1": url,
+                        "url_2": counterpart,
+                        "impressions_1": row["impressions"],
+                        "impressions_2": other_row["impressions"]
+                    })
+
+    return duplicates
+
+
+def build_prompt(sge, hizli, scale, ilk_sayfa, duplicates):
+    """Gemini API için prompt oluşturur."""
+
+    prompt = """Sen bir SEO uzmanısın. Aşağıda Google Search Console sayfa verilerinden elde edilen 5 farklı analiz grubu var. 
+Her grup için en kritik 10 örneği seç ve her grup için 1 cümlelik aksiyon önerisi yaz.
+
+## 1. SGE Riski (Gösterim > 10.000 VE CTR < %1)
+Bu sayfalar yüksek gösterim alıyor ama çok düşük tıklama oranına sahip. SGE (Search Generative Experience) bunları özetliyor olabilir.
+Toplam kayıt: {sge_count}
+Veriler:
+{sge_data}
+
+## 2. Hızlı Kazanç (Pozisyon 4-10 VE Gösterim > 5.000)
+Bu sayfalar ilk sayfa sınırında ve yüksek gösterim alıyor. Küçük optimizasyonlarla TOP 3'e çıkabilir.
+Toplam kayıt: {hizli_count}
+Veriler:
+{hizli_data}
+
+## 3. Scale Edilebilir (CTR > %15 VE Gösterim < 500)
+Bu sayfalar çok yüksek CTR'a sahip ama düşük gösterim alıyor. İçerik/backlink ile gösterim artırılabilir.
+Toplam kayıt: {scale_count}
+Veriler:
+{scale_data}
+
+## 4. İlk Sayfa Sınırı (Pozisyon 8-12 VE Gösterim > 3.000)
+Bu sayfalar ilk sayfanın sonunda veya ikinci sayfanın başında. İlk sayfaya çıkabilir.
+Toplam kayıt: {ilk_count}
+Veriler:
+{ilk_data}
+
+## 5. Duplicate URL Şüphesi
+Trailing slash farkı veya aynı slug ile farklı URL'ler — canonical sorunları ve gösterim bölünmesi riski.
+Toplam kayıt: {dup_count}
+Veriler:
+{dup_data}
+
+Her grup için:
+- Toplam kayıt sayısını bildir
+- En kritik 10 örneği seç (gösterim/tıklama potansiyeline göre)
+- Her grup için 1 cümlelik aksiyon önerisi yaz
+- SGE riski grubundaki her kayıt için kısa bir aksiyon önerisi ekle
+"""
+
+    def format_rows(rows, max_rows=50):
+        return json.dumps(rows[:max_rows], ensure_ascii=False, indent=2)
+
+    return prompt.format(
+        sge_count=len(sge),
+        sge_data=format_rows(sge),
+        hizli_count=len(hizli),
+        hizli_data=format_rows(hizli),
+        scale_count=len(scale),
+        scale_data=format_rows(scale),
+        ilk_count=len(ilk_sayfa),
+        ilk_data=format_rows(ilk_sayfa),
+        dup_count=len(duplicates),
+        dup_data=format_rows(duplicates)
+    )
+
+
+def call_gemini(prompt):
+    """Gemini API'yi çağırır ve yapılandırılmış JSON yanıtı alır."""
+
+    payload = {
+        "contents": [
+            {
+                "parts": [
+                    {"text": prompt}
+                ]
+            }
+        ],
+        "generationConfig": {
+            "responseMimeType": "application/json",
+            "responseSchema": {
+                "type": "OBJECT",
+                "properties": {
+                    "sge_riski": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "url": {"type": "STRING"},
+                                "impressions": {"type": "INTEGER"},
+                                "ctr": {"type": "NUMBER"},
+                                "position": {"type": "NUMBER"},
+                                "aksiyon": {"type": "STRING"}
+                            },
+                            "required": ["url", "impressions", "ctr", "position", "aksiyon"]
+                        }
+                    },
+                    "hizli_kazanc": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "url": {"type": "STRING"},
+                                "impressions": {"type": "INTEGER"},
+                                "ctr": {"type": "NUMBER"},
+                                "position": {"type": "NUMBER"}
+                            },
+                            "required": ["url", "impressions", "ctr", "position"]
+                        }
+                    },
+                    "scale_edilebilir": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "url": {"type": "STRING"},
+                                "ctr": {"type": "NUMBER"},
+                                "impressions": {"type": "INTEGER"}
+                            },
+                            "required": ["url", "ctr", "impressions"]
+                        }
+                    },
+                    "ilk_sayfa_siniri": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "url": {"type": "STRING"},
+                                "position": {"type": "NUMBER"},
+                                "impressions": {"type": "INTEGER"}
+                            },
+                            "required": ["url", "position", "impressions"]
+                        }
+                    },
+                    "duplicate_url_suphe": {
+                        "type": "ARRAY",
+                        "items": {
+                            "type": "OBJECT",
+                            "properties": {
+                                "url_1": {"type": "STRING"},
+                                "url_2": {"type": "STRING"},
+                                "impressions_1": {"type": "INTEGER"},
+                                "impressions_2": {"type": "INTEGER"}
+                            },
+                            "required": ["url_1", "url_2", "impressions_1", "impressions_2"]
+                        }
+                    },
+                    "grup_ozeti": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "sge_riski_toplam": {"type": "INTEGER"},
+                            "sge_riski_aksiyon": {"type": "STRING"},
+                            "hizli_kazanc_toplam": {"type": "INTEGER"},
+                            "hizli_kazanc_aksiyon": {"type": "STRING"},
+                            "scale_edilebilir_toplam": {"type": "INTEGER"},
+                            "scale_edilebilir_aksiyon": {"type": "STRING"},
+                            "ilk_sayfa_siniri_toplam": {"type": "INTEGER"},
+                            "ilk_sayfa_siniri_aksiyon": {"type": "STRING"},
+                            "duplicate_url_suphe_toplam": {"type": "INTEGER"},
+                            "duplicate_url_suphe_aksiyon": {"type": "STRING"}
+                        },
+                        "required": [
+                            "sge_riski_toplam", "sge_riski_aksiyon",
+                            "hizli_kazanc_toplam", "hizli_kazanc_aksiyon",
+                            "scale_edilebilir_toplam", "scale_edilebilir_aksiyon",
+                            "ilk_sayfa_siniri_toplam", "ilk_sayfa_siniri_aksiyon",
+                            "duplicate_url_suphe_toplam", "duplicate_url_suphe_aksiyon"
+                        ]
+                    }
+                },
+                "required": [
+                    "sge_riski", "hizli_kazanc", "scale_edilebilir",
+                    "ilk_sayfa_siniri", "duplicate_url_suphe", "grup_ozeti"
+                ]
+            }
+        }
+    }
+
+    headers = {"Content-Type": "application/json"}
+
+    max_retries = 5
+    for attempt in range(max_retries):
+        wait_time = 10 * (attempt + 1)  # 10, 20, 30, 40, 50 saniye
+
+        if attempt > 0:
+            print(f"⏳ {wait_time} saniye bekleniyor (deneme {attempt + 1}/{max_retries})...")
+            time.sleep(wait_time)
+
+        print(f"⏳ Gemini API'ye istek gönderiliyor... (deneme {attempt + 1}/{max_retries})")
+        response = requests.post(GEMINI_URL, headers=headers, json=payload, timeout=120)
+
+        if response.status_code == 200:
+            break
+        elif response.status_code == 429:
+            print(f"⚠️  Rate limit aşıldı, tekrar denenecek...")
+            continue
+        else:
+            print(f"❌ API Hatası: {response.status_code}")
+            print(response.text)
+            return None
+    else:
+        print("❌ Tüm denemeler başarısız oldu (rate limit)")
+        return None
+
+    result = response.json()
+
+    try:
+        text = result["candidates"][0]["content"]["parts"][0]["text"]
+        return json.loads(text)
+    except (KeyError, IndexError, json.JSONDecodeError) as e:
+        print(f"❌ Yanıt parse hatası: {e}")
+        print(json.dumps(result, indent=2, ensure_ascii=False)[:2000])
+        return None
+
+
+def main():
+    print("=" * 60)
+    print("  GSC Sayfa Analizi - Gemini API ile")
+    print("=" * 60)
+
+    # 1. CSV'yi oku
+    print(f"\n📂 CSV okunuyor: {CSV_FILE}")
+    data = parse_csv(CSV_FILE)
+    print(f"   ✅ {len(data)} sayfa verisi okundu")
+
+    # 2. Grupları filtrele
+    print("\n🔍 Veriler filtreleniyor...")
+
+    sge = filter_sge_riski(data)
+    print(f"   • SGE Riski: {len(sge)} sayfa (Gösterim > 10K, CTR < %1)")
+
+    hizli = filter_hizli_kazanc(data)
+    print(f"   • Hızlı Kazanç: {len(hizli)} sayfa (Poz. 4-10, Gösterim > 5K)")
+
+    scale = filter_scale_edilebilir(data)
+    print(f"   • Scale Edilebilir: {len(scale)} sayfa (CTR > %15, Gösterim < 500)")
+
+    ilk_sayfa = filter_ilk_sayfa_siniri(data)
+    print(f"   • İlk Sayfa Sınırı: {len(ilk_sayfa)} sayfa (Poz. 8-12, Gösterim > 3K)")
+
+    duplicates = find_duplicate_url_suspects(data)
+    print(f"   • Duplicate URL Şüphesi: {len(duplicates)} çift")
+
+    # 3. Prompt oluştur
+    prompt = build_prompt(sge, hizli, scale, ilk_sayfa, duplicates)
+    print(f"\n📝 Prompt oluşturuldu ({len(prompt)} karakter)")
+
+    # 4. Gemini API'yi çağır
+    result = call_gemini(prompt)
+
+    if result:
+        # 5. Sonuçları kaydet
+        with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
+            json.dump(result, f, ensure_ascii=False, indent=2)
+
+        print(f"\n✅ Sonuçlar kaydedildi: {OUTPUT_FILE}")
+
+        # 6. Özet yazdır
+        if "grup_ozeti" in result:
+            ozet = result["grup_ozeti"]
+            print("\n" + "=" * 60)
+            print("  📊 SONUÇ ÖZETİ")
+            print("=" * 60)
+            print(f"\n  🔴 SGE Riski: {ozet.get('sge_riski_toplam', '?')} sayfa")
+            print(f"     → {ozet.get('sge_riski_aksiyon', '')}")
+            print(f"\n  🟢 Hızlı Kazanç: {ozet.get('hizli_kazanc_toplam', '?')} sayfa")
+            print(f"     → {ozet.get('hizli_kazanc_aksiyon', '')}")
+            print(f"\n  🔵 Scale Edilebilir: {ozet.get('scale_edilebilir_toplam', '?')} sayfa")
+            print(f"     → {ozet.get('scale_edilebilir_aksiyon', '')}")
+            print(f"\n  🟡 İlk Sayfa Sınırı: {ozet.get('ilk_sayfa_siniri_toplam', '?')} sayfa")
+            print(f"     → {ozet.get('ilk_sayfa_siniri_aksiyon', '')}")
+            print(f"\n  🟠 Duplicate URL: {ozet.get('duplicate_url_suphe_toplam', '?')} çift")
+            print(f"     → {ozet.get('duplicate_url_suphe_aksiyon', '')}")
+            print()
+    else:
+        print("\n❌ Gemini API'den sonuç alınamadı.")
+
+
+if __name__ == "__main__":
+    main()
