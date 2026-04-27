@@ -1,0 +1,14 @@
+{
+  "name": "js-render-seo-analyzer",
+  "version": "1.0.0",
+  "description": "SEO tool to compare raw vs JS-rendered HTML of any URL",
+  "main": "analyzer.js",
+  "scripts": {
+    "analyze": "node analyzer.js"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "diff": "^8.0.3",
+    "playwright": "^1.40.0"
+  }
+}
