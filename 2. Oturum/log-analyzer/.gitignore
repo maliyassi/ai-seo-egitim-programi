@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.venv/
+venv/
+env/
+
+# Veritabanları (kişisel log verileri içerebilir)
+*.db
+*.sqlite
+*.sqlite3
+scans/
+
+# Google API Kimlik Bilgileri — ASLA GITHUB'A YÜKLEMEYİN
+credentials.json
+token.json
+*.credentials.json
+service-account*.json
+
+# Log dosyaları
+logs/
+*.log
+
+# Parse flag
+.parsing
+
+# macOS
+.DS_Store

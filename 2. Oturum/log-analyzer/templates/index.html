@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="tr">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Log Analyzer – Plesk SEO Insights</title>
+    <meta name="description"
+        content="Analyze Plesk server logs with Google Search Console integration for SEO insights">
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+
+<body>
+    <div class="app-container">
+        <!-- Header -->
+        <header class="app-header" id="app-header" style="display:none">
+            <div class="app-logo">
+                <div class="app-logo-icon">📊</div>
+                <div>
+                    <h1>Log Analyzer</h1>
+                    <div class="subtitle" id="site-display"></div>
+                </div>
+            </div>
+            <nav class="nav-tabs" id="nav-tabs">
+                <button class="nav-tab active" data-view="dashboard" onclick="switchView('dashboard')">
+                    <span class="tab-icon">🤖</span> Bot Tarama
+                </button>
+                <button class="nav-tab" data-view="decline404" onclick="switchView('decline404')">
+                    <span class="tab-icon">📉</span> 404 Düşüş
+                </button>
+                <button class="nav-tab" data-view="orphan" onclick="switchView('orphan')">
+                    <span class="tab-icon">👻</span> Orphan Sayfalar
+                </button>
+            </nav>
+        </header>
+
+        <!-- Setup Screen -->
+        <div class="view active" id="view-setup">
+            <div class="setup-screen">
+                <div class="card setup-card">
+                    <div class="setup-icon">🔍</div>
+                    <h2 class="setup-title">Plesk Log Analyzer</h2>
+                    <p class="setup-subtitle">Sunucu loglarını analiz edin, GSC verileriyle çapraz referans yapın</p>
+
+                    <div class="form-group">
+                        <label class="form-label">Google Search Console Site</label>
+                        <select class="form-control" id="site-select">
+                            <option value="">Yükleniyor...</option>
+                        </select>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label class="form-label">Zaman Dilimi (GMT)</label>
+                            <select class="form-control" id="timezone-select">
+                                <option value="-12">GMT-12</option>
+                                <option value="-11">GMT-11</option>
+                                <option value="-10">GMT-10</option>
+                                <option value="-9">GMT-9</option>
+                                <option value="-8">GMT-8</option>
+                                <option value="-7">GMT-7</option>
+                                <option value="-6">GMT-6</option>
+                                <option value="-5">GMT-5</option>
+                                <option value="-4">GMT-4</option>
+                                <option value="-3">GMT-3</option>
+                                <option value="-2">GMT-2</option>
+                                <option value="-1">GMT-1</option>
+                                <option value="0">GMT+0 (UTC)</option>
+                                <option value="1">GMT+1</option>
+                                <option value="2">GMT+2</option>
+                                <option value="3" selected>GMT+3 (Türkiye)</option>
+                                <option value="4">GMT+4</option>
+                                <option value="5">GMT+5</option>
+                                <option value="5.5">GMT+5:30</option>
+                                <option value="6">GMT+6</option>
+                                <option value="7">GMT+7</option>
+                                <option value="8">GMT+8</option>
+                                <option value="9">GMT+9</option>
+                                <option value="10">GMT+10</option>
+                                <option value="11">GMT+11</option>
+                                <option value="12">GMT+12</option>
+                            </select>
+                        </div>
+                    </div>
+
+                    <button class="btn btn-primary" id="btn-start" onclick="startParsing()"
+                        style="width:100%;justify-content:center;margin-top:12px">
+                        🚀 Logları Yükle ve Analiz Et
+                    </button>
+
+                    <div id="history-container"
+                        style="margin-top: 32px; border-top: 1px solid var(--border-color); padding-top: 24px; display: none;">
+                        <h3
+                            style="font-size: 14px; font-weight: 600; color: var(--text-muted); margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px;">
+                            Geçmiş Taramalar</h3>
+                        <div id="history-list" style="display: flex; flex-direction: column; gap: 8px;">
+                            <!-- History items injected here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Dashboard View -->
+        <div class="view" id="view-dashboard">
+            <div class="section-header">
+                <h2 class="section-title">🤖 Bot Tarama Analizi</h2>
+                <p class="section-desc">Googlebot ve diğer botların sitenizi nasıl taradığını analiz edin</p>
+            </div>
+
+            <!-- Filters -->
+            <div class="filter-bar">
+                <div class="form-group">
+                    <label class="form-label">Bot Tipi</label>
+                    <select class="form-control" id="filter-bot-type" onchange="loadDashboard()">
+                        <option value="googlebot_all">Tüm Googlebot</option>
+                        <option value="googlebot_desktop">Googlebot Desktop</option>
+                        <option value="googlebot_smartphone">Googlebot Smartphone</option>
+                        <option value="googlebot_image">Googlebot Image</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Başlangıç</label>
+                    <input type="date" class="form-control" id="filter-date-from" onchange="loadDashboard()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Bitiş</label>
+                    <input type="date" class="form-control" id="filter-date-to" onchange="loadDashboard()">
+                </div>
+                <div class="form-group">
+                    <label class="form-label">Durum Kodu</label>
+                    <select class="form-control" id="filter-status" onchange="loadCrawlDetail()">
+                        <option value="">Tümü</option>
+                        <option value="200">200 OK</option>
+                        <option value="301">301 Redirect</option>
+                        <option value="302">302 Redirect</option>
+                        <option value="404">404 Not Found</option>
+                        <option value="500">500 Server Error</option>
+                    </select>
+                </div>
+            </div>
+
+            <!-- Stats -->
+            <div class="stats-grid" id="dashboard-stats"></div>
+
+            <!-- Charts -->
+            <div class="chart-grid">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title"><span class="icon">📈</span> Günlük Tarama Hacmi</div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="chart-daily"></canvas>
+                    </div>
+                </div>
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title"><span class="icon">🎯</span> Durum Kodları</div>
+                    </div>
+                    <div class="chart-container">
+                        <canvas id="chart-status"></canvas>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Crawl Detail Table -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title"><span class="icon">📋</span> Taranan URL'ler</div>
+                    <span id="crawl-total" class="badge badge-info"></span>
+                </div>
+                <div class="table-container">
+                    <table id="crawl-table">
+                        <thead>
+                            <tr>
+                                <th onclick="sortCrawlTable('url')">URL <span class="sort-icon">↕</span></th>
+                                <th onclick="sortCrawlTable('count')">Tarama <span class="sort-icon">↕</span></th>
+                                <th onclick="sortCrawlTable('last_crawl')">Son Tarama <span class="sort-icon">↕</span>
+                                </th>
+                                <th>Durum Kodları</th>
+                            </tr>
+                        </thead>
+                        <tbody id="crawl-tbody"></tbody>
+                    </table>
+                </div>
+                <div class="pagination" id="crawl-pagination"></div>
+            </div>
+        </div>
+
+        <!-- 404 Decline View -->
+        <div class="view" id="view-decline404">
+            <div class="section-header">
+                <h2 class="section-title">📉 404 Düşüş Raporu</h2>
+                <p class="section-desc">GSC'de gösterimi iyi olan ama loglarda 404 dönen sayfaları bulun</p>
+            </div>
+
+            <div class="card" style="margin-bottom:24px">
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">GSC Geriye Bakış (Ay)</label>
+                        <input type="number" class="form-control" id="decline-months" value="6" min="1" max="16">
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Bot Filtresi</label>
+                        <select class="form-control" id="decline-bot-type">
+                            <option value="googlebot_all">Tüm Googlebot</option>
+                            <option value="googlebot_desktop">Googlebot Desktop</option>
+                            <option value="googlebot_smartphone">Googlebot Smartphone</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">&nbsp;</label>
+                        <button class="btn btn-primary" onclick="load404Decline()" style="width:100%">
+                            🔎 Analiz Et
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats-grid" id="decline-stats"></div>
+
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title"><span class="icon">🔴</span> 404 Olan Sayfalar (GSC Gösterimi Olan)</div>
+                </div>
+                <div id="decline-loading" class="empty-state" style="display:none">
+                    <div class="spinner" style="width:40px;height:40px;margin:0 auto 16px"></div>
+                    <h3>GSC verileri yükleniyor...</h3>
+                    <p>Bu işlem birkaç dakika sürebilir</p>
+                </div>
+                <div class="table-container" id="decline-table-container" style="display:none">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>URL</th>
+                                <th>Gösterim</th>
+                                <th>Tıklama</th>
+                                <th>CTR</th>
+                                <th>Pozisyon</th>
+                                <th>404 Sayısı</th>
+                                <th>İlk 404</th>
+                                <th>Son 404</th>
+                            </tr>
+                        </thead>
+                        <tbody id="decline-tbody"></tbody>
+                    </table>
+                </div>
+                <div id="decline-empty" class="empty-state">
+                    <div class="empty-icon">📊</div>
+                    <h3>Henüz analiz yapılmadı</h3>
+                    <p>Yukarıdaki butona tıklayarak analizi başlatın</p>
+                </div>
+            </div>
+        </div>
+
+        <!-- Orphan Pages View -->
+        <div class="view" id="view-orphan">
+            <div class="section-header">
+                <h2 class="section-title">👻 Orphan Sayfa Bulucu</h2>
+                <p class="section-desc">Sitemap'te olan ama Google'ın son zamanlarda hiç taramadığı sayfaları bulun</p>
+            </div>
+
+            <div class="card" style="margin-bottom:24px">
+                <div class="form-group">
+                    <label class="form-label">Sitemap XML URL'leri (Her satıra bir tane)</label>
+                    <textarea class="form-control" id="orphan-sitemaps" rows="4"
+                        placeholder="https://www.orneksite.com/sitemap.xml&#10;https://www.orneksite.com/blog-sitemap.xml"></textarea>
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label class="form-label">Bot Filtresi</label>
+                        <select class="form-control" id="orphan-bot-type">
+                            <option value="googlebot_all">Tüm Googlebot</option>
+                            <option value="googlebot_desktop">Googlebot Desktop</option>
+                            <option value="googlebot_smartphone">Googlebot Smartphone</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">&nbsp;</label>
+                        <button class="btn btn-primary" onclick="findOrphanPages()" style="width:100%">
+                            🔎 Orphan Sayfaları Bul
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="stats-grid" id="orphan-stats"></div>
+
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title"><span class="icon">📋</span> Sonuçlar</div>
+                    <div id="orphan-export-btn" style="display:none">
+                        <button class="btn btn-secondary btn-sm" onclick="exportOrphan()">📥 CSV İndir</button>
+                    </div>
+                </div>
+                <div id="orphan-loading" class="empty-state" style="display:none">
+                    <div class="spinner" style="width:40px;height:40px;margin:0 auto 16px"></div>
+                    <h3>Analiz ediliyor...</h3>
+                </div>
+                <div class="table-container" id="orphan-table-container" style="display:none">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Durum</th>
+                                <th>URL</th>
+                                <th>Tarama Sayısı</th>
+                                <th>Son Tarama</th>
+                                <th>İlk Tarama</th>
+                                <th>Durum Kodları</th>
+                            </tr>
+                        </thead>
+                        <tbody id="orphan-tbody"></tbody>
+                    </table>
+                </div>
+                <div id="orphan-empty" class="empty-state">
+                    <div class="empty-icon">🔗</div>
+                    <h3>Sitemap URL'si girin ve analizi başlatın</h3>
+                    <p>XML sitemap (veya sitemap dizini) linkini yukarıdaki alana yapıştırın</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay" id="loading-overlay">
+        <div class="loading-content">
+            <div class="spinner"></div>
+            <h3 id="loading-title">Loglar Yükleniyor...</h3>
+            <p id="loading-detail" class="progress-text">Lütfen bekleyin</p>
+            <div class="progress-bar">
+                <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+            </div>
+            <p id="loading-progress" class="progress-text">0%</p>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+
+</html>
