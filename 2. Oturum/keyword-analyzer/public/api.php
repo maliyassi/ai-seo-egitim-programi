@@ -9,7 +9,7 @@ require_once dirname(__DIR__) . '/vendor/autoload.php';
 header('Content-Type: application/json; charset=utf-8');
 
 const DEFAULT_GEMINI_MODEL = 'gemini-3-flash-preview';
-const DEFAULT_GEMINI_API_KEY = 'AIzaSyDlg48MCGwcxcjDL1WPMnZGxJWXspBn5Ns';
+const DEFAULT_GEMINI_API_KEY = 'BURAYA_GEMINI_API_KEYINIZI_GIRIN';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);

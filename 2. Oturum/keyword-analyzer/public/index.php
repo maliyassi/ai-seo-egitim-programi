@@ -10,7 +10,7 @@ use KeywordAnalyzer\SearchConsoleClient;
 require_once dirname(__DIR__) . '/vendor/autoload.php';
 
 const DEFAULT_GEMINI_MODEL = 'gemini-2.5-flash';
-const DEFAULT_GEMINI_API_KEY = 'AIzaSyDlg48MCGwcxcjDL1WPMnZGxJWXspBn5Ns';
+const DEFAULT_GEMINI_API_KEY = 'BURAYA_GEMINI_API_KEYINIZI_GIRIN';
 
 function e(string $value): string
 {
