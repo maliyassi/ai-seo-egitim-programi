@@ -1,0 +1,21 @@
+# PHP bağımlılıkları
+/vendor/
+
+# Google API Kimlik Bilgileri — ASLA GITHUB'A YÜKLEMEYİN
+credentials.json
+token.json
+token.json.bak
+*.credentials.json
+
+# GSC'den çekilen geçici CSV verileri (kişisel veri içerebilir)
+data_*.csv
+
+# Python cache
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+
+# Log dosyaları
+*.log
