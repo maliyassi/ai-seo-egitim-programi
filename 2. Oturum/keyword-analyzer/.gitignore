@@ -1,0 +1,10 @@
+/vendor/
+.env
+*.log
+.DS_Store
+
+# Google API Kimlik Bilgileri — ASLA GITHUB'A YÜKLEMEYİN
+credentials.json
+credentials-2.json
+*.credentials.json
+service-account*.json

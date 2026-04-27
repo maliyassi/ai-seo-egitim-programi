@@ -1,0 +1,14 @@
+{
+  "name": "maliyassi/keyword-analyzer",
+  "description": "Search Console query coverage analyzer with Gemini-assisted optimization",
+  "type": "project",
+  "require": {
+    "php": ">=8.1",
+    "google/apiclient": "^2.16"
+  },
+  "autoload": {
+    "psr-4": {
+      "KeywordAnalyzer\\": "src/"
+    }
+  }
+}
